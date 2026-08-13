@@ -85,3 +85,24 @@ class ScheduleBlock:
     duration_minutes: int
     kind: str            # "TASK" | "BREAK" | "BUSY" | "BUFFER"
     task_id: Optional[int] = None
+
+
+@dataclass
+class WeeklyCommitment:
+    """
+    A single recurring, unavailable/busy period that repeats every week
+    (e.g. school, work, tuition). day_of_week follows Python's
+    datetime.weekday() convention: 0 = Monday ... 6 = Sunday.
+
+    start_time/end_time are kept as zero-padded 24-hour "HH:MM" strings,
+    matching the format already used by core.scheduler.Scheduler and
+    database.models.ScheduleBlock, so they sort and compare correctly
+    as plain strings and convert directly via Scheduler._parse_time-style
+    parsing without any extra normalization step.
+    """
+    id: Optional[int]
+    day_of_week: int          # 0 = Monday ... 6 = Sunday
+    start_time: str            # "HH:MM"
+    end_time: str               # "HH:MM"
+    label: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
