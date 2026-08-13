@@ -48,6 +48,16 @@ class FocusScreen(QWidget):
         # yet completed/ended). Used to guard against impulsive exits.
         self._session_active = True
 
+        # Tracks whether this screen currently holds live connections to
+        # focus_manager/timer signals. FocusManager and TimerEngine are
+        # long-lived singletons shared across every focus session, so
+        # disconnecting must happen exactly once per FocusScreen instance -
+        # otherwise a second disconnect attempt (e.g. from both
+        # _show_completion() and a subsequent closeEvent()) tries to
+        # disconnect a slot that's no longer connected, which is what was
+        # producing the "Failed to disconnect" RuntimeWarnings.
+        self._signals_connected = False
+
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowTitle("Focus Mode")
         self.setObjectName("FocusScreen")
@@ -129,13 +139,23 @@ class FocusScreen(QWidget):
     # -- Signal wiring ------------------------------------------------
 
     def _connect_signals(self) -> None:
+        if self._signals_connected:
+            return
         self.focus_manager.timer.tick.connect(self._on_tick)
         self.focus_manager.timer.paused.connect(self._on_timer_paused)
         self.focus_manager.timer.resumed.connect(self._on_timer_resumed)
         self.focus_manager.session_finished.connect(self._on_session_finished)
         self.focus_manager.session_ended_early.connect(self._on_session_ended_early)
+        self._signals_connected = True
 
     def _disconnect_signals(self) -> None:
+        # Guard against redundant disconnects: this method can legitimately
+        # be called twice in normal use (once from _show_completion() when
+        # the session ends, and again from closeEvent() when the window is
+        # actually closed). Only the first call should touch the signal
+        # connections - the second is a no-op.
+        if not self._signals_connected:
+            return
         for signal, slot in (
             (self.focus_manager.timer.tick, self._on_tick),
             (self.focus_manager.timer.paused, self._on_timer_paused),
@@ -147,6 +167,7 @@ class FocusScreen(QWidget):
                 signal.disconnect(slot)
             except (TypeError, RuntimeError):
                 pass
+        self._signals_connected = False
 
     # -- Timer/session reactions ----------------------------------------
 
