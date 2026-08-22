@@ -19,6 +19,7 @@ Step flow:
 from typing import Dict, List
 
 from PySide6.QtCore import Qt, QTime
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QPushButton, QStackedWidget, QLineEdit, QCheckBox, QTimeEdit, QSpinBox,
@@ -64,10 +65,37 @@ class OnboardingWizard(QDialog):
 
         self.setWindowTitle("Welcome to Focus")
         self.setMinimumSize(560, 520)
+        self.resize(650, 600)
         self.setModal(True)
 
         self._build_ui()
         self._load_initial_data()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+
+        if getattr(self, "_positioned_on_screen", False):
+            return
+
+        self._positioned_on_screen = True
+
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+
+        available = screen.availableGeometry()
+
+        self.adjustSize()
+
+        width = min(self.width(), available.width() - 40)
+        height = min(self.height(), available.height() - 40)
+
+        self.resize(width, height)
+
+        x = available.x() + (available.width() - width) // 2
+        y = available.y() + (available.height() - height) // 2
+
+        self.move(x, y)
 
     # -- UI construction --------------------------------------------------
 
