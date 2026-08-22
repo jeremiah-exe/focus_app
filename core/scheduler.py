@@ -3,17 +3,33 @@ Scheduler: turns a manual availability window + a list of tasks into
 a suggested sequence of work/break blocks. Pure logic, no PySide6,
 no database - fully unit-testable in isolation.
 
-MVP scope: manual availability only (no calendar busy-periods yet -
-that is Phase 6 in the roadmap). The scheduler never books over
-anything; it simply lays tasks and breaks end-to-end within the window
-and stops when the window runs out, flagging leftover work.
+MVP scope: manual availability, plus optional pre-normalized busy
+intervals supplied by the caller (Stage 1). The scheduler does not
+know or care where busy intervals came from - weekly commitments,
+calendar events, and manually blocked time can all feed the same
+`busy_intervals` field later without touching this module again.
+Wiring an actual source (e.g. weekly commitments) into a caller is
+out of scope here - see Stage 2.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from database.models import Task, ScheduleBlock
+
+
+@dataclass
+class BusyInterval:
+    """A single normalized, unavailable period inside the scheduling
+    window. Deliberately source-agnostic: the Scheduler treats this as
+    opaque input and never depends on where it came from (a weekly
+    commitment, a calendar event, a manual block, ...). `label` is
+    optional and purely cosmetic - it ends up on the resulting BUSY
+    ScheduleBlock if provided."""
+    start: str          # "HH:MM"
+    end: str             # "HH:MM"
+    label: str = ""
 
 
 @dataclass
@@ -23,6 +39,9 @@ class SchedulerInput:
     window_end: str            # "HH:MM"
     focus_minutes: int = 50
     break_minutes: int = 10
+    # Optional and defaults to empty so every existing caller keeps
+    # working, and scheduling behavior is unchanged, without passing this.
+    busy_intervals: List[BusyInterval] = field(default_factory=list)
 
 
 @dataclass
@@ -45,20 +64,53 @@ class Scheduler:
                                     total_planned_minutes=0,
                                     unscheduled_tasks=list(scheduler_input.tasks))
 
-        total_available = int((end - start).total_seconds() // 60)
-        cursor = start
-        blocks: List[ScheduleBlock] = []
-        unscheduled: List[Task] = []
-        sessions_since_break = 0
+        merged_busy = self._normalize_busy_intervals(scheduler_input.busy_intervals, start, end)
+        timeline = self._build_timeline(start, end, merged_busy)
 
         pending = [t for t in scheduler_input.tasks if t.status != "COMPLETED" and t.status != "CANCELLED"]
 
-        for task in pending:
-            remaining_minutes = task.estimated_minutes
-            scheduled_any = False
+        blocks: List[ScheduleBlock] = []
+        unscheduled: List[Task] = []
+        total_available = 0
 
-            while remaining_minutes > 0:
-                room_left = int((end - cursor).total_seconds() // 60)
+        # task_ptr/remaining_minutes carry over across FREE segments so a
+        # task can be split across a busy gap instead of being abandoned.
+        task_ptr = 0
+        remaining_minutes = 0
+
+        def prime_next_task() -> None:
+            """Advance task_ptr past any (defensive-only) zero/negative
+            duration tasks, marking them unscheduled without consuming
+            any window time - mirrors the original per-task for-loop,
+            which always moved on to the next task regardless of the
+            current one's outcome."""
+            nonlocal task_ptr, remaining_minutes
+            while task_ptr < len(pending) and pending[task_ptr].estimated_minutes <= 0:
+                unscheduled.append(pending[task_ptr])
+                task_ptr += 1
+            remaining_minutes = pending[task_ptr].estimated_minutes if task_ptr < len(pending) else 0
+
+        prime_next_task()
+
+        for entry in timeline:
+            if entry[0] == "BUSY":
+                _, seg_start, seg_end, label = entry
+                blocks.append(ScheduleBlock(
+                    label=label or "Busy",
+                    start=seg_start.strftime("%H:%M"),
+                    end=seg_end.strftime("%H:%M"),
+                    duration_minutes=int((seg_end - seg_start).total_seconds() // 60),
+                    kind="BUSY",
+                ))
+                continue
+
+            _, seg_start, seg_end = entry
+            total_available += int((seg_end - seg_start).total_seconds() // 60)
+            cursor = seg_start
+            sessions_since_break = 0
+
+            while task_ptr < len(pending) and remaining_minutes > 0:
+                room_left = int((seg_end - cursor).total_seconds() // 60)
                 if room_left <= 0:
                     break
 
@@ -66,6 +118,7 @@ class Scheduler:
                 if chunk <= 0:
                     break
 
+                task = pending[task_ptr]
                 block_end = cursor + timedelta(minutes=chunk)
                 blocks.append(ScheduleBlock(
                     label=task.title,
@@ -77,12 +130,11 @@ class Scheduler:
                 ))
                 cursor = block_end
                 remaining_minutes -= chunk
-                scheduled_any = True
                 sessions_since_break += 1
 
                 # Insert a break if there's still room and more work to do.
-                room_left = int((end - cursor).total_seconds() // 60)
-                more_work = remaining_minutes > 0 or task != pending[-1]
+                room_left = int((seg_end - cursor).total_seconds() // 60)
+                more_work = remaining_minutes > 0 or task_ptr != len(pending) - 1
                 if more_work and room_left > 0 and sessions_since_break >= 1:
                     break_len = min(scheduler_input.break_minutes, room_left)
                     if break_len > 0:
@@ -97,19 +149,25 @@ class Scheduler:
                         cursor = break_end
                         sessions_since_break = 0
 
-            if not scheduled_any or remaining_minutes > 0:
-                unscheduled.append(task)
+                if remaining_minutes <= 0:
+                    task_ptr += 1
+                    prime_next_task()
 
-        # Leftover buffer time at the end of the window.
-        room_left = int((end - cursor).total_seconds() // 60)
-        if room_left > 0:
-            blocks.append(ScheduleBlock(
-                label="Buffer / free time",
-                start=cursor.strftime("%H:%M"),
-                end=end.strftime("%H:%M"),
-                duration_minutes=room_left,
-                kind="BUFFER",
-            ))
+            # Leftover free time in this segment (tasks ran out before
+            # the busy interval / window end that bounds it).
+            leftover = int((seg_end - cursor).total_seconds() // 60)
+            if leftover > 0:
+                blocks.append(ScheduleBlock(
+                    label="Buffer / free time",
+                    start=cursor.strftime("%H:%M"),
+                    end=seg_end.strftime("%H:%M"),
+                    duration_minutes=leftover,
+                    kind="BUFFER",
+                ))
+
+        # Any task never reached because the window (its free portion)
+        # ran out entirely.
+        unscheduled.extend(pending[task_ptr:])
 
         total_planned = sum(b.duration_minutes for b in blocks if b.kind == "TASK")
 
@@ -119,6 +177,68 @@ class Scheduler:
             total_planned_minutes=total_planned,
             unscheduled_tasks=unscheduled,
         )
+
+    # -- Busy interval handling -------------------------------------------
+
+    @classmethod
+    def _normalize_busy_intervals(
+        cls,
+        busy_intervals: List[BusyInterval],
+        window_start: datetime,
+        window_end: datetime,
+    ) -> List[Tuple[datetime, datetime, str]]:
+        """Parse, validate, clip to the window, and merge overlapping/
+        adjacent busy intervals. Returns a chronologically sorted list
+        of (start, end, label) tuples, each confined to
+        [window_start, window_end]. Intervals entirely outside the
+        window are dropped (no effect on scheduling)."""
+        parsed: List[Tuple[datetime, datetime, str]] = []
+        for interval in busy_intervals:
+            b_start = cls._parse_time(interval.start)
+            b_end = cls._parse_time(interval.end)
+            if b_end <= b_start:
+                raise ValueError(
+                    f"BusyInterval end ({interval.end!r}) must be after "
+                    f"start ({interval.start!r})"
+                )
+
+            clipped_start = max(b_start, window_start)
+            clipped_end = min(b_end, window_end)
+            if clipped_end <= clipped_start:
+                continue  # entirely outside the scheduling window
+            parsed.append((clipped_start, clipped_end, interval.label))
+
+        parsed.sort(key=lambda item: item[0])
+
+        merged: List[Tuple[datetime, datetime, str]] = []
+        for b_start, b_end, label in parsed:
+            if merged and b_start <= merged[-1][1]:
+                prev_start, prev_end, prev_label = merged[-1]
+                merged[-1] = (prev_start, max(prev_end, b_end), prev_label)
+            else:
+                merged.append((b_start, b_end, label))
+        return merged
+
+    @staticmethod
+    def _build_timeline(
+        window_start: datetime,
+        window_end: datetime,
+        merged_busy: List[Tuple[datetime, datetime, str]],
+    ) -> List[tuple]:
+        """Interleave the merged busy intervals with the free gaps
+        between/around them into one chronological sequence spanning
+        the full window. Each entry is either
+        ("FREE", start, end) or ("BUSY", start, end, label)."""
+        timeline: List[tuple] = []
+        cursor = window_start
+        for b_start, b_end, label in merged_busy:
+            if b_start > cursor:
+                timeline.append(("FREE", cursor, b_start))
+            timeline.append(("BUSY", b_start, b_end, label))
+            cursor = max(cursor, b_end)
+        if cursor < window_end:
+            timeline.append(("FREE", cursor, window_end))
+        return timeline
 
     @staticmethod
     def _parse_time(value: str) -> datetime:
