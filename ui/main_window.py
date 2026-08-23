@@ -16,6 +16,7 @@ from core.task_manager import TaskManager
 from core.session_manager import SessionManager
 from core.focus_manager import FocusManager
 from core.scheduler import Scheduler
+from core.onboarding_manager import OnboardingManager
 from ui.dashboard.dashboard import DashboardScreen
 from ui.schedule.schedule_screen import ScheduleScreen
 from ui.statistics.statistics_screen import StatisticsScreen
@@ -29,12 +30,14 @@ class MainWindow(QMainWindow):
         session_manager: SessionManager,
         focus_manager: FocusManager,
         scheduler: Scheduler,
+        onboarding_manager: OnboardingManager,
     ):
         super().__init__()
         self.task_manager = task_manager
         self.session_manager = session_manager
         self.focus_manager = focus_manager
         self.scheduler = scheduler
+        self.onboarding_manager = onboarding_manager
         self.focus_window: FocusScreen | None = None
 
         self.setWindowTitle(APP_NAME)
@@ -48,7 +51,6 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # -- Sidebar --------------------------------------------------
         sidebar = QWidget()
         sidebar.setObjectName("Sidebar")
         sidebar.setFixedWidth(200)
@@ -64,7 +66,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
 
         self.dashboard = DashboardScreen(self.task_manager, self.session_manager, self._launch_focus)
-        self.schedule_screen = ScheduleScreen(self.task_manager, self.scheduler)
+        self.schedule_screen = ScheduleScreen(self.task_manager, self.scheduler, self.onboarding_manager)
         self.statistics_screen = StatisticsScreen(self.session_manager)
 
         self.stack.addWidget(self.dashboard)
@@ -107,7 +109,6 @@ class MainWindow(QMainWindow):
             self.statistics_screen.refresh()
 
     def _launch_focus(self, task, duration_minutes: int) -> None:
-        """Open Focus Mode as a fullscreen window, handing control to it."""
         self.focus_window = FocusScreen(
             focus_manager=self.focus_manager,
             task=task,

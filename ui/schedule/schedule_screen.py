@@ -8,21 +8,18 @@ the resulting ScheduleBlock list. No calendar integration and no new
 scheduling algorithm are implemented here.
 """
 
-from PySide6.QtCore import Qt, QTime
+from PySide6.QtCore import Qt, QDate, QTime
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
-    QListWidgetItem, QFrame, QSpinBox, QTimeEdit,
+    QListWidgetItem, QFrame, QSpinBox, QTimeEdit, QDateEdit,
 )
 
 from core.task_manager import TaskManager
-from core.scheduler import Scheduler, SchedulerInput, SchedulerResult
+from core.onboarding_manager import OnboardingManager
+from core.scheduler import Scheduler, SchedulerInput, SchedulerResult, BusyInterval
 
 
-# Visual treatment per ScheduleBlock.kind so focus time is clearly
-# distinguishable from breaks/buffer/other time. BUSY is included for
-# forward-compatibility with calendar-aware scheduling, even though the
-# current Scheduler never produces it yet.
 _KIND_STYLE = {
     "TASK": ("Focus", "#5b8def"),
     "BREAK": ("Break", "#e0b96c"),
@@ -32,10 +29,11 @@ _KIND_STYLE = {
 
 
 class ScheduleScreen(QWidget):
-    def __init__(self, task_manager: TaskManager, scheduler: Scheduler):
+    def __init__(self, task_manager: TaskManager, scheduler: Scheduler, onboarding_manager: OnboardingManager):
         super().__init__()
         self.task_manager = task_manager
         self.scheduler = scheduler
+        self.onboarding_manager = onboarding_manager
         self.last_result: SchedulerResult | None = None
         self._build_ui()
         self.refresh()
@@ -52,13 +50,23 @@ class ScheduleScreen(QWidget):
         outer.addWidget(title)
         outer.addWidget(subtitle)
 
-        # -- Availability input card --------------------------------
         input_card = QFrame()
         input_card.setObjectName("Card")
         input_layout = QVBoxLayout(input_card)
         input_layout.setContentsMargins(20, 16, 20, 16)
         input_layout.setSpacing(12)
         input_layout.addWidget(self._section_header("AVAILABILITY"))
+
+        date_row = QHBoxLayout()
+        date_row.setSpacing(10)
+        date_row.addWidget(QLabel("Date"))
+        self.date_input = QDateEdit()
+        self.date_input.setCalendarPopup(True)
+        self.date_input.setDisplayFormat("dddd, d MMMM yyyy")
+        self.date_input.setDate(QDate.currentDate())
+        date_row.addWidget(self.date_input)
+        date_row.addStretch()
+        input_layout.addLayout(date_row)
 
         window_row = QHBoxLayout()
         window_row.setSpacing(10)
@@ -113,7 +121,6 @@ class ScheduleScreen(QWidget):
 
         outer.addWidget(input_card)
 
-        # -- Results card ---------------------------------------------
         results_card = QFrame()
         results_card.setObjectName("Card")
         results_layout = QVBoxLayout(results_card)
@@ -141,8 +148,6 @@ class ScheduleScreen(QWidget):
         label.setObjectName("SectionHeader")
         return label
 
-    # -- Data -----------------------------------------------------------
-
     def refresh(self) -> None:
         """Called when the user navigates to this screen. Refreshes the
         pending-task count; does not re-run the scheduler, since that
@@ -156,18 +161,35 @@ class ScheduleScreen(QWidget):
         else:
             self.pending_tasks_label.setText(f"{count} active tasks ready to schedule.")
 
-    # -- Actions ----------------------------------------------------------
-
     def _generate_schedule(self) -> None:
         tasks = self.task_manager.list_active_tasks()
+
+        # selected date -> Python weekday() (Monday=0 ... Sunday=6) ->
+        # that day's recurring commitments, via the shared OnboardingManager
+        # only. No repository/SQLite access happens here.
+        weekday = self.date_input.date().toPython().weekday()
+        commitments = self.onboarding_manager.get_commitments_for_day(weekday)
+        busy_intervals = [
+            BusyInterval(start=commitment.start_time, end=commitment.end_time, label=commitment.label)
+            for commitment in commitments
+        ]
+
         scheduler_input = SchedulerInput(
             tasks=tasks,
             window_start=self.start_input.time().toString("HH:mm"),
             window_end=self.end_input.time().toString("HH:mm"),
             focus_minutes=self.focus_minutes_input.value(),
             break_minutes=self.break_minutes_input.value(),
+            busy_intervals=busy_intervals,
         )
-        result = self.scheduler.generate(scheduler_input)
+        try:
+            result = self.scheduler.generate(scheduler_input)
+        except ValueError as exc:
+            self.blocks_list.clear()
+            self.summary_label.setText(f"Could not generate schedule: {exc}")
+            self.unscheduled_label.setText("")
+            return
+
         self.last_result = result
         self._render_result(result)
 

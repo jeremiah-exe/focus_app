@@ -63,7 +63,7 @@ def main() -> None:
             # without ever constructing or showing MainWindow.
             sys.exit(0)
 
-    window = MainWindow(task_manager, session_manager, focus_manager, scheduler)
+    window = MainWindow(task_manager, session_manager, focus_manager, scheduler, onboarding_manager)
     window.show()
 
     sys.exit(app.exec())
