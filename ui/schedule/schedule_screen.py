@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from core.task_manager import TaskManager
 from core.onboarding_manager import OnboardingManager
 from core.scheduler import Scheduler, SchedulerInput, SchedulerResult, BusyInterval
+from ui.theme import style_calendar_popup
 
 
 _KIND_STYLE = {
@@ -64,6 +65,10 @@ class ScheduleScreen(QWidget):
         self.date_input.setCalendarPopup(True)
         self.date_input.setDisplayFormat("dddd, d MMMM yyyy")
         self.date_input.setDate(QDate.currentDate())
+        # The calendar popup's weekday header row (Mon/Tue/...) is
+        # painted via QTextCharFormat, not QSS, so it doesn't pick up
+        # the app-wide stylesheet on its own - style it explicitly.
+        style_calendar_popup(self.date_input.calendarWidget())
         date_row.addWidget(self.date_input)
         date_row.addStretch()
         input_layout.addLayout(date_row)

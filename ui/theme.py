@@ -4,6 +4,9 @@ stylesheet live here so the rest of the UI code never hardcodes hex
 values inline.
 """
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QTextCharFormat
+
 # -- Palette -----------------------------------------------------------
 BG_BASE = "#0d0e11"          # app background
 BG_SURFACE = "#15171b"       # cards / panels
@@ -207,3 +210,94 @@ QDialog {{
     background-color: {BG_SURFACE};
 }}
 """
+
+# -- QCalendarWidget popup helper ---------------------------------------
+#
+# QDateEdit's calendar popup is a QCalendarWidget whose weekday header
+# row (Mon, Tue, Wed...) is painted using QTextCharFormat objects set
+# via setWeekdayTextFormat(), not through the normal QSS cascade. That
+# means the app-wide STYLESHEET above (and any per-widget setStyleSheet
+# call) can style the calendar's grid, nav bar, and selected-day cell,
+# but it can never reach that header row's text color - it stays at
+# whatever the OS/Qt default is, which on a dark background often ends
+# up unreadable against the row's own background.
+#
+# Fix: set the QTextCharFormat objects directly on the QCalendarWidget
+# instance, in addition to a QSS pass for the rest of the popup.
+# Call this once on every QCalendarWidget the app creates (e.g.
+# `date_edit.calendarWidget()` right after constructing a QDateEdit
+# with setCalendarPopup(True)).
+
+CALENDAR_POPUP_STYLESHEET = f"""
+QCalendarWidget QWidget {{
+    background-color: {BG_SURFACE};
+    alternate-background-color: {BG_SURFACE};
+}}
+
+QCalendarWidget QToolButton {{
+    color: {TEXT_PRIMARY};
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+}}
+
+QCalendarWidget QToolButton:hover {{
+    background-color: {BG_SURFACE_ALT};
+}}
+
+QCalendarWidget QMenu {{
+    background-color: {BG_SURFACE_ALT};
+    color: {TEXT_PRIMARY};
+}}
+
+QCalendarWidget QSpinBox {{
+    background-color: {BG_SURFACE_ALT};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER};
+}}
+
+QCalendarWidget QAbstractItemView:enabled {{
+    color: {TEXT_PRIMARY};
+    background-color: {BG_SURFACE};
+    selection-background-color: {ACCENT};
+    selection-color: #ffffff;
+    outline: none;
+}}
+
+QCalendarWidget QAbstractItemView:disabled {{
+    color: {TEXT_MUTED};
+}}
+"""
+
+
+def style_calendar_popup(calendar_widget) -> None:
+    """Apply the app's dark theme to a QCalendarWidget popup (e.g. the
+    one behind a QDateEdit with setCalendarPopup(True)), including the
+    weekday header row that QSS alone cannot reach.
+
+    Usage:
+        self.date_input = QDateEdit()
+        self.date_input.setCalendarPopup(True)
+        style_calendar_popup(self.date_input.calendarWidget())
+    """
+    if calendar_widget is None:
+        return
+
+    weekday_format = QTextCharFormat()
+    weekday_format.setForeground(QColor(TEXT_SECONDARY))
+    weekday_format.setBackground(QColor(BG_SURFACE))
+
+    weekend_format = QTextCharFormat()
+    weekend_format.setForeground(QColor(TEXT_SECONDARY))
+    weekend_format.setBackground(QColor(BG_SURFACE))
+
+    for day in (
+        Qt.Monday, Qt.Tuesday, Qt.Wednesday, Qt.Thursday, Qt.Friday,
+    ):
+        calendar_widget.setWeekdayTextFormat(day, weekday_format)
+    for day in (Qt.Saturday, Qt.Sunday):
+        calendar_widget.setWeekdayTextFormat(day, weekend_format)
+
+    calendar_widget.setStyleSheet(CALENDAR_POPUP_STYLESHEET)

@@ -73,17 +73,10 @@ class Scheduler:
         unscheduled: List[Task] = []
         total_available = 0
 
-        # task_ptr/remaining_minutes carry over across FREE segments so a
-        # task can be split across a busy gap instead of being abandoned.
         task_ptr = 0
         remaining_minutes = 0
 
         def prime_next_task() -> None:
-            """Advance task_ptr past any (defensive-only) zero/negative
-            duration tasks, marking them unscheduled without consuming
-            any window time - mirrors the original per-task for-loop,
-            which always moved on to the next task regardless of the
-            current one's outcome."""
             nonlocal task_ptr, remaining_minutes
             while task_ptr < len(pending) and pending[task_ptr].estimated_minutes <= 0:
                 unscheduled.append(pending[task_ptr])
@@ -132,7 +125,6 @@ class Scheduler:
                 remaining_minutes -= chunk
                 sessions_since_break += 1
 
-                # Insert a break if there's still room and more work to do.
                 room_left = int((seg_end - cursor).total_seconds() // 60)
                 more_work = remaining_minutes > 0 or task_ptr != len(pending) - 1
                 if more_work and room_left > 0 and sessions_since_break >= 1:
@@ -153,8 +145,6 @@ class Scheduler:
                     task_ptr += 1
                     prime_next_task()
 
-            # Leftover free time in this segment (tasks ran out before
-            # the busy interval / window end that bounds it).
             leftover = int((seg_end - cursor).total_seconds() // 60)
             if leftover > 0:
                 blocks.append(ScheduleBlock(
@@ -165,8 +155,6 @@ class Scheduler:
                     kind="BUFFER",
                 ))
 
-        # Any task never reached because the window (its free portion)
-        # ran out entirely.
         unscheduled.extend(pending[task_ptr:])
 
         total_planned = sum(b.duration_minutes for b in blocks if b.kind == "TASK")
@@ -178,8 +166,6 @@ class Scheduler:
             unscheduled_tasks=unscheduled,
         )
 
-    # -- Busy interval handling -------------------------------------------
-
     @classmethod
     def _normalize_busy_intervals(
         cls,
@@ -187,11 +173,6 @@ class Scheduler:
         window_start: datetime,
         window_end: datetime,
     ) -> List[Tuple[datetime, datetime, str]]:
-        """Parse, validate, clip to the window, and merge overlapping/
-        adjacent busy intervals. Returns a chronologically sorted list
-        of (start, end, label) tuples, each confined to
-        [window_start, window_end]. Intervals entirely outside the
-        window are dropped (no effect on scheduling)."""
         parsed: List[Tuple[datetime, datetime, str]] = []
         for interval in busy_intervals:
             b_start = cls._parse_time(interval.start)
@@ -205,14 +186,18 @@ class Scheduler:
             clipped_start = max(b_start, window_start)
             clipped_end = min(b_end, window_end)
             if clipped_end <= clipped_start:
-                continue  # entirely outside the scheduling window
+                continue
             parsed.append((clipped_start, clipped_end, interval.label))
 
         parsed.sort(key=lambda item: item[0])
 
         merged: List[Tuple[datetime, datetime, str]] = []
         for b_start, b_end, label in parsed:
-            if merged and b_start <= merged[-1][1]:
+            if merged and b_start < merged[-1][1]:
+                # Genuine overlap (not just touching) - combine into one
+                # block. Adjacent/touching intervals are intentionally
+                # kept separate below so each commitment keeps its own
+                # label and time range.
                 prev_start, prev_end, prev_label = merged[-1]
                 merged[-1] = (prev_start, max(prev_end, b_end), prev_label)
             else:
@@ -225,10 +210,6 @@ class Scheduler:
         window_end: datetime,
         merged_busy: List[Tuple[datetime, datetime, str]],
     ) -> List[tuple]:
-        """Interleave the merged busy intervals with the free gaps
-        between/around them into one chronological sequence spanning
-        the full window. Each entry is either
-        ("FREE", start, end) or ("BUSY", start, end, label)."""
         timeline: List[tuple] = []
         cursor = window_start
         for b_start, b_end, label in merged_busy:
