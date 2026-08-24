@@ -51,6 +51,14 @@ class ScheduleScreen(QWidget):
         outer.addWidget(title)
         outer.addWidget(subtitle)
 
+        # Read the saved onboarding preferences once, at construction
+        # time, to seed the focus/break length defaults below. This is
+        # a one-shot read for initial values only - nothing in this
+        # screen ever writes back to OnboardingManager, so a user
+        # changing these spin boxes for one generated schedule never
+        # touches the saved preference.
+        preferences = self.onboarding_manager.get_preferences()
+
         input_card = QFrame()
         input_card.setObjectName("Card")
         input_layout = QVBoxLayout(input_card)
@@ -98,7 +106,7 @@ class ScheduleScreen(QWidget):
         self.focus_minutes_input = QSpinBox()
         self.focus_minutes_input.setRange(5, 240)
         self.focus_minutes_input.setSingleStep(5)
-        self.focus_minutes_input.setValue(50)
+        self.focus_minutes_input.setValue(preferences.focus_minutes)
         self.focus_minutes_input.setSuffix(" min")
         durations_row.addWidget(self.focus_minutes_input)
 
@@ -106,7 +114,7 @@ class ScheduleScreen(QWidget):
         self.break_minutes_input = QSpinBox()
         self.break_minutes_input.setRange(0, 60)
         self.break_minutes_input.setSingleStep(5)
-        self.break_minutes_input.setValue(10)
+        self.break_minutes_input.setValue(preferences.break_minutes)
         self.break_minutes_input.setSuffix(" min")
         durations_row.addWidget(self.break_minutes_input)
 
@@ -155,8 +163,12 @@ class ScheduleScreen(QWidget):
 
     def refresh(self) -> None:
         """Called when the user navigates to this screen. Refreshes the
-        pending-task count; does not re-run the scheduler, since that
-        depends on the user's chosen window."""
+        pending-task count only; does not re-run the scheduler (that
+        depends on the user's chosen window) and deliberately does not
+        touch focus_minutes_input/break_minutes_input - those are seeded
+        once from saved preferences in _build_ui() and are otherwise
+        fully user-controlled, so repeated navigation must not reset
+        them back to the saved defaults."""
         pending = self.task_manager.list_active_tasks()
         count = len(pending)
         if count == 0:

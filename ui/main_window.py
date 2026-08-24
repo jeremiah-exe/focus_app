@@ -65,7 +65,13 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
 
-        self.dashboard = DashboardScreen(self.task_manager, self.session_manager, self._launch_focus)
+        # Same shared OnboardingManager instance passed into this window
+        # (see main.py) is handed to both screens that need saved
+        # preferences - no new repository/database/manager is created
+        # here.
+        self.dashboard = DashboardScreen(
+            self.task_manager, self.session_manager, self.onboarding_manager, self._launch_focus
+        )
         self.schedule_screen = ScheduleScreen(self.task_manager, self.scheduler, self.onboarding_manager)
         self.statistics_screen = StatisticsScreen(self.session_manager)
 

@@ -13,15 +13,23 @@ from PySide6.QtWidgets import (
 
 from core.task_manager import TaskManager
 from core.session_manager import SessionManager
+from core.onboarding_manager import OnboardingManager
 from database.models import TaskStatus
 from ui.tasks.task_dialog import TaskDialog
 
 
 class DashboardScreen(QWidget):
-    def __init__(self, task_manager: TaskManager, session_manager: SessionManager, on_start_focus):
+    def __init__(
+        self,
+        task_manager: TaskManager,
+        session_manager: SessionManager,
+        onboarding_manager: OnboardingManager,
+        on_start_focus,
+    ):
         super().__init__()
         self.task_manager = task_manager
         self.session_manager = session_manager
+        self.onboarding_manager = onboarding_manager
         self.on_start_focus = on_start_focus
         self._build_ui()
         self.refresh()
@@ -82,10 +90,19 @@ class DashboardScreen(QWidget):
         self.task_selector.setMinimumWidth(180)
         picker_row.addWidget(self.task_selector, 1)
 
+        # Default duration comes from the user's saved onboarding
+        # preference (OnboardingManager.get_preferences().focus_minutes).
+        # This is read once here, at widget construction time, so it
+        # only ever seeds the initial value - refresh() (called on every
+        # dashboard navigation) never touches this control again, which
+        # is what lets a user's manual per-session change stick without
+        # being reset or written back as a new saved preference.
+        preferred_focus_minutes = self.onboarding_manager.get_preferences().focus_minutes
+
         self.duration_selector = QSpinBox()
         self.duration_selector.setRange(5, 240)
         self.duration_selector.setSingleStep(5)
-        self.duration_selector.setValue(50)
+        self.duration_selector.setValue(preferred_focus_minutes)
         self.duration_selector.setSuffix(" min")
         picker_row.addWidget(self.duration_selector)
         start_layout.addLayout(picker_row)
@@ -135,6 +152,10 @@ class DashboardScreen(QWidget):
     # -- Data -----------------------------------------------------------
 
     def refresh(self) -> None:
+        # Deliberately does NOT touch self.duration_selector: its value
+        # is seeded once from the saved preference in _build_ui() and is
+        # otherwise fully user-controlled. Re-reading the preference here
+        # would clobber any value the user picked for their next session.
         self._refresh_task_list()
         self._refresh_task_selector()
         self._refresh_today_summary()
