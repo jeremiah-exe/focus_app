@@ -52,11 +52,11 @@ class ScheduleScreen(QWidget):
         outer.addWidget(subtitle)
 
         # Read the saved onboarding preferences once, at construction
-        # time, to seed the focus/break length defaults below. This is
-        # a one-shot read for initial values only - nothing in this
-        # screen ever writes back to OnboardingManager, so a user
-        # changing these spin boxes for one generated schedule never
-        # touches the saved preference.
+        # time, to seed the availability window (wake/sleep time) and
+        # focus/break length defaults below. This is a one-shot read
+        # for initial values only - nothing in this screen ever writes
+        # back to OnboardingManager, so a user changing these controls
+        # for one generated schedule never touches the saved preference.
         preferences = self.onboarding_manager.get_preferences()
 
         input_card = QFrame()
@@ -87,13 +87,18 @@ class ScheduleScreen(QWidget):
         window_row.addWidget(QLabel("From"))
         self.start_input = QTimeEdit()
         self.start_input.setDisplayFormat("HH:mm")
-        self.start_input.setTime(QTime.currentTime())
+        # Defaults to the wake time collected during onboarding rather
+        # than the current clock time, since "availability window"
+        # means the user's usual day, not "right now".
+        self.start_input.setTime(self._parse_time(preferences.wake_time))
         window_row.addWidget(self.start_input)
 
         window_row.addWidget(QLabel("To"))
         self.end_input = QTimeEdit()
         self.end_input.setDisplayFormat("HH:mm")
-        self.end_input.setTime(QTime.currentTime().addSecs(3 * 60 * 60))
+        # Defaults to the sleep time collected during onboarding, for
+        # the same reason.
+        self.end_input.setTime(self._parse_time(preferences.sleep_time))
         window_row.addWidget(self.end_input)
 
         window_row.addStretch()
@@ -250,3 +255,11 @@ class ScheduleScreen(QWidget):
         if hours:
             return f"{hours}h {mins}m"
         return f"{mins}m"
+
+    @staticmethod
+    def _parse_time(value: str) -> QTime:
+        try:
+            hour_str, minute_str = value.split(":")
+            return QTime(int(hour_str), int(minute_str))
+        except (ValueError, AttributeError):
+            return QTime(7, 0)

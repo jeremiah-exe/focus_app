@@ -10,7 +10,8 @@ dependency order and hands control to Qt.
 import sys
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtCore import QEvent, QObject
+from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QDialog
 
 from app.config import APP_NAME, MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT
 from database.database import Database
@@ -30,9 +31,24 @@ from ui.theme import STYLESHEET
 
 DB_PATH = Path(__file__).resolve().parent / "data" / "focus.db"
 
+class SpinBoxWheelFilter(QObject):
+    """Prevents accidental mouse-wheel changes to spin boxes."""
+
+    def eventFilter(self, watched, event):
+        if (
+            event.type() == QEvent.Type.Wheel
+            and isinstance(watched, QAbstractSpinBox)
+        ):
+            watched.clearFocus()
+            event.ignore()
+            return True
+
+        return super().eventFilter(watched, event)
 
 def main() -> None:
     app = QApplication(sys.argv)
+    spinbox_wheel_filter = SpinBoxWheelFilter(app)
+    app.installEventFilter(spinbox_wheel_filter)
     app.setApplicationName(APP_NAME)
     app.setStyleSheet(STYLESHEET)
 
