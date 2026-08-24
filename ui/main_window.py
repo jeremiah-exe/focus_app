@@ -1,8 +1,8 @@
 """
 MainWindow: the Normal Mode shell. Holds a sidebar for navigation and
-a QStackedWidget for the Dashboard / Schedule / Statistics screens.
-Focus Mode is launched as its own fullscreen window rather than a
-stack page, so it can visually take over the whole screen.
+a QStackedWidget for the Dashboard / Schedule / Statistics / Settings
+screens. Focus Mode is launched as its own fullscreen window rather
+than a stack page, so it can visually take over the whole screen.
 """
 
 from PySide6.QtCore import Qt
@@ -20,6 +20,7 @@ from core.onboarding_manager import OnboardingManager
 from ui.dashboard.dashboard import DashboardScreen
 from ui.schedule.schedule_screen import ScheduleScreen
 from ui.statistics.statistics_screen import StatisticsScreen
+from ui.settings.settings_screen import SettingsScreen
 from ui.focus.focus_screen import FocusScreen
 
 
@@ -66,23 +67,26 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
 
         # Same shared OnboardingManager instance passed into this window
-        # (see main.py) is handed to both screens that need saved
-        # preferences - no new repository/database/manager is created
-        # here.
+        # (see main.py) is handed to every screen that needs saved
+        # preferences/commitments - no new repository/database/manager
+        # is created here.
         self.dashboard = DashboardScreen(
             self.task_manager, self.session_manager, self.onboarding_manager, self._launch_focus
         )
         self.schedule_screen = ScheduleScreen(self.task_manager, self.scheduler, self.onboarding_manager)
         self.statistics_screen = StatisticsScreen(self.session_manager)
+        self.settings_screen = SettingsScreen(self.onboarding_manager)
 
         self.stack.addWidget(self.dashboard)
         self.stack.addWidget(self.schedule_screen)
         self.stack.addWidget(self.statistics_screen)
+        self.stack.addWidget(self.settings_screen)
 
         nav_items = [
             ("Dashboard", 0),
             ("Schedule", 1),
             ("Statistics", 2),
+            ("Settings", 3),
         ]
         self.nav_buttons = []
         for label, index in nav_items:
@@ -113,6 +117,8 @@ class MainWindow(QMainWindow):
             self.schedule_screen.refresh()
         elif index == 2:
             self.statistics_screen.refresh()
+        elif index == 3:
+            self.settings_screen.refresh()
 
     def _launch_focus(self, task, duration_minutes: int) -> None:
         self.focus_window = FocusScreen(
