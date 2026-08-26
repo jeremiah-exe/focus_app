@@ -259,7 +259,7 @@ The schema is expected to evolve as calendar sync, focus profiles, and reminders
 ### Installation
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/jeremiah-exe/focus_app/
 cd focus_app
 pip install PySide6
 ```
