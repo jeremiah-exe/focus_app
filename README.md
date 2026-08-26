@@ -311,18 +311,3 @@ This project follows a strict layering discipline (see `database/models.py`, `co
 The MVP intentionally does **not** start with Windows application blocking or Google Calendar — the core focus loop (task → schedule → focus → track) is proven first.
 
 ---
-
-## Privacy Model
-
-- All data is stored **locally** in SQLite by default — nothing is uploaded.
-- External integrations (e.g. Google Calendar) are strictly opt-in.
-- The app requests only the minimum permissions required for an enabled integration.
-- Application-usage tracking (once implemented) can be disabled at any time.
-- Google authentication (once implemented) uses OAuth — the app never stores a Google password.
-- Users can disconnect integrations and delete local data at any time via Settings.
-
----
-
-## License
-
-_Add your chosen license here (e.g. MIT, Apache 2.0)._
